@@ -107,7 +107,7 @@ export const ScreenDisplay: React.FC<ScreenDisplayProps> = ({
   ];
 
   return (
-    <div className="flex flex-col w-full h-[410px] bg-[#08090d] border-4 border-[#181a20] rounded-xl shadow-[inset_0_0_20px_rgba(0,0,0,0.9),0_4px_12px_rgba(0,0,0,0.8)] overflow-hidden relative font-sans">
+    <div className="flex flex-col w-full h-[480px] min-h-[460px] bg-[#08090d] border-4 border-[#181a20] rounded-xl shadow-[inset_0_0_20px_rgba(0,0,0,0.9),0_4px_12px_rgba(0,0,0,0.8)] overflow-hidden relative font-sans">
       {/* MPC OS Top Status Bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-[#171a22] via-[#12141c] to-[#171a22] border-b border-[#262c3a] select-none text-slate-300">
         {/* Project & Song position */}

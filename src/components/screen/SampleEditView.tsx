@@ -6,13 +6,12 @@ import {
   Play, 
   Sliders, 
   Scissors, 
-  Plus, 
   Trash2, 
   Sparkles, 
   Check, 
-  Layers,
-  ChevronRight,
-  MoveHorizontal
+  Volume2,
+  VolumeX,
+  Maximize2
 } from 'lucide-react';
 
 interface SampleEditViewProps {
@@ -23,7 +22,7 @@ interface SampleEditViewProps {
   onTriggerPad: (padId: number) => void;
   onDropAudioFile: (file: File, padId: number) => void;
   onAssignChopsToPads: (sourceBuffer: AudioBuffer, baseName: string, slices: SliceMarker[], startPadId: number) => void;
-  onPreviewBuffer: (buffer: AudioBuffer) => void;
+  onPreviewBuffer: (buffer: AudioBuffer, volume?: number, startRatio?: number, endRatio?: number) => void;
   onSliceAudioBuffer: (source: AudioBuffer, start: number, end: number) => AudioBuffer;
   onGenerateEqualSlices: (count: number) => SliceMarker[];
   onDetectTransientSlices: (buffer: AudioBuffer, count: number, sensitivity: number) => SliceMarker[];
@@ -64,11 +63,24 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
   const [activeSliceIndex, setActiveSliceIndex] = useState<number>(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Canvas and interaction refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const waveformContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const [draggingMarkerIndex, setDraggingMarkerIndex] = useState<number | null>(null);
-  const [draggingTrimHandle, setDraggingTrimHandle] = useState<'START' | 'END' | null>(null);
+
+  // Active dragging state for Start & End bars and Chop markers
+  // 'START' | 'END' | 'SLICE_START' | 'SLICE_END' | number (slice boundary id) | null
+  const [activeDragTarget, setActiveDragTarget] = useState<string | number | null>(null);
+
+  const duration = sampleData?.buffer?.duration || 1.0;
+  const startOffset = padConfig.startOffset ?? 0;
+  const endOffset = padConfig.endOffset ?? 1;
+
+  // Active slice in CHOP mode
+  const activeSlice = slices[activeSliceIndex] || slices[0];
+  const sliceStartRatio = activeSlice ? activeSlice.start : 0;
+  const sliceEndRatio = activeSlice ? activeSlice.end : 1;
 
   // Recalculate chop slices when sample changes or mode/count changes
   const recalculateChopSlices = useCallback(() => {
@@ -101,7 +113,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
     }, 100);
   };
 
-  // Draw Waveform Canvas (both for TRIM and CHOP modes)
+  // Draw Audio Waveform onto Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -126,41 +138,43 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
     }
     ctx.stroke();
 
+    // Center zero baseline
+    ctx.strokeStyle = '#232b3d';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
     const buffer = sampleData?.buffer;
     if (buffer) {
       const channelData = buffer.getChannelData(0);
       const step = Math.ceil(channelData.length / width);
-      const amp = height / 2;
+      const amp = height / 2 - 2;
 
-      // In CHOP mode: Draw slice segment backgrounds & vertical boundary divider lines
+      // In CHOP mode: Draw subtle color washes for each slice
       if (editSubTab === 'CHOP' && slices.length > 0) {
         slices.forEach((slice, idx) => {
           const x1 = slice.start * width;
           const x2 = slice.end * width;
           const isSelected = idx === activeSliceIndex;
 
-          // Fill slice background area
           ctx.fillStyle = isSelected ? `${slice.color}35` : `${slice.color}15`;
           ctx.fillRect(x1, 0, Math.max(1, x2 - x1), height);
-
-          // Divider Line
-          ctx.strokeStyle = slice.color;
-          ctx.lineWidth = isSelected ? 2.5 : 1.5;
-          ctx.beginPath();
-          ctx.moveTo(x1, 0);
-          ctx.lineTo(x1, height);
-          ctx.stroke();
-
-          // Slice Marker flag label
-          ctx.fillStyle = isSelected ? '#ffffff' : slice.color;
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.fillText(`[${idx + 1}]`, x1 + 4, 14);
         });
       }
 
       // Draw Main Audio Waveform
-      ctx.fillStyle = editSubTab === 'CHOP' ? '#e2e8f0' : (padConfig.color || '#ff2a3b');
       for (let i = 0; i < width; i++) {
+        const ratio = i / width;
+        let isInsideActiveZone = true;
+
+        if (editSubTab === 'TRIM') {
+          isInsideActiveZone = ratio >= startOffset && ratio <= endOffset;
+        } else if (editSubTab === 'CHOP' && activeSlice) {
+          isInsideActiveZone = ratio >= activeSlice.start && ratio <= activeSlice.end;
+        }
+
         let min = 1.0;
         let max = -1.0;
         for (let j = 0; j < step; j++) {
@@ -168,106 +182,197 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
           if (datum < min) min = datum;
           if (datum > max) max = datum;
         }
-        ctx.fillRect(i, (1 + min) * amp, 1, Math.max(1, (max - min) * amp));
-      }
 
-      // In TRIM mode: Draw Start & End markers
-      if (editSubTab === 'TRIM') {
-        const startX = (padConfig.startOffset || 0) * width;
-        const endX = (padConfig.endOffset || 1) * width;
+        const y1 = (1 + min) * amp;
+        const barH = Math.max(1, (max - min) * amp);
 
-        // Gray out outside trim regions
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.fillRect(0, 0, startX, height);
-        ctx.fillRect(endX, 0, width - endX, height);
+        // Highlight active playback zone brightly, dim inactive trimmed regions
+        if (isInsideActiveZone) {
+          ctx.fillStyle = editSubTab === 'CHOP' ? '#00d2ff' : (padConfig.color || '#ff2a3b');
+        } else {
+          ctx.fillStyle = '#475569';
+        }
 
-        // Start Marker (Green)
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(startX, 0);
-        ctx.lineTo(startX, height);
-        ctx.stroke();
-
-        ctx.fillStyle = '#10b981';
-        ctx.font = 'bold 9px "JetBrains Mono", monospace';
-        ctx.fillText('START', startX + 4, 14);
-
-        // End Marker (Red)
-        ctx.strokeStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.moveTo(endX, 0);
-        ctx.lineTo(endX, height);
-        ctx.stroke();
-
-        ctx.fillStyle = '#ef4444';
-        ctx.fillText('END', Math.max(0, endX - 25), 14);
+        ctx.fillRect(i, y1, 1, barH);
       }
     } else {
       ctx.fillStyle = '#64748b';
       ctx.font = '11px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('NO AUDIO SAMPLE LOADED &bull; DRAG & DROP AUDIO FILE OR CLICK LOAD', width / 2, height / 2);
+      ctx.fillText('NO AUDIO SAMPLE LOADED • DRAG & DROP AUDIO FILE OR CLICK LOAD', width / 2, height / 2);
     }
-  }, [sampleData, padConfig, editSubTab, slices, activeSliceIndex]);
+  }, [sampleData, padConfig, editSubTab, slices, activeSliceIndex, startOffset, endOffset, activeSlice]);
 
-  // Audition a specific slice
+  // Audition helper
+  const handleAuditionTrim = () => {
+    if (!sampleData?.buffer) {
+      onTriggerPad(padConfig.id);
+      return;
+    }
+    onPreviewBuffer(sampleData.buffer, padConfig.volume, startOffset, endOffset);
+  };
+
   const handleAuditionSlice = (sliceIdx: number) => {
     if (!sampleData?.buffer || !slices[sliceIdx]) return;
     const slice = slices[sliceIdx];
     setActiveSliceIndex(sliceIdx);
-
-    const sliced = onSliceAudioBuffer(sampleData.buffer, slice.start, slice.end);
-    onPreviewBuffer(sliced);
+    onPreviewBuffer(sampleData.buffer, padConfig.volume, slice.start, slice.end);
   };
 
-  // Pointer Down on Canvas: Drag boundaries or select/audition slice or add slice point
-  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas || !sampleData?.buffer) return;
-    const rect = canvas.getBoundingClientRect();
+  // Pointer interactions for dragging START bar, END bar, and Chop boundaries
+  const handleContainerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // If the click happened on a button or input, ignore
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input')) return;
+
+    const container = waveformContainerRef.current;
+    if (!container || !sampleData?.buffer) return;
+    const rect = container.getBoundingClientRect();
     const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 
-    // 1. In TRIM mode: check start or end marker drag
+    // 1. In TRIM mode:
     if (editSubTab === 'TRIM') {
-      const startRatio = padConfig.startOffset || 0;
-      const endRatio = padConfig.endOffset || 1;
+      const distToStart = Math.abs(clickRatio - startOffset);
+      const distToEnd = Math.abs(clickRatio - endOffset);
 
-      if (Math.abs(clickRatio - startRatio) < 0.04) {
-        setDraggingTrimHandle('START');
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      if (distToStart < 0.035 || (distToStart < distToEnd && distToStart < 0.08)) {
+        setActiveDragTarget('START');
+        container.setPointerCapture(e.pointerId);
         return;
       }
-      if (Math.abs(clickRatio - endRatio) < 0.04) {
-        setDraggingTrimHandle('END');
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      if (distToEnd < 0.035 || distToEnd < 0.08) {
+        setActiveDragTarget('END');
+        container.setPointerCapture(e.pointerId);
         return;
       }
 
-      // If clicking inside, audition pad
-      onTriggerPad(padConfig.id);
+      // If clicked between, audition trim!
+      handleAuditionTrim();
       return;
     }
 
     // 2. In CHOP mode:
-    // Check if dragging an existing slice divider boundary line
-    const hitIdx = slices.findIndex((s, idx) => idx > 0 && Math.abs(s.start - clickRatio) < 0.02);
-    if (hitIdx !== -1) {
-      setDraggingMarkerIndex(hitIdx);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    if (editSubTab === 'CHOP' && activeSlice) {
+      const distToSliceStart = Math.abs(clickRatio - activeSlice.start);
+      const distToSliceEnd = Math.abs(clickRatio - activeSlice.end);
+
+      if (distToSliceStart < 0.035) {
+        setActiveDragTarget('SLICE_START');
+        container.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (distToSliceEnd < 0.035) {
+        setActiveDragTarget('SLICE_END');
+        container.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // Check other slice divider boundaries
+      const hitSliceIdx = slices.findIndex((s, idx) => idx > 0 && Math.abs(s.start - clickRatio) < 0.025);
+      if (hitSliceIdx !== -1) {
+        setActiveDragTarget(hitSliceIdx);
+        container.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // In MANUAL chop mode: clicking inserts a new slice divider bar!
+      if (chopMode === 'MANUAL') {
+        insertManualSliceAt(clickRatio);
+        return;
+      }
+
+      // Otherwise, select and audition clicked slice
+      const foundIdx = slices.findIndex((s) => clickRatio >= s.start && clickRatio <= s.end);
+      if (foundIdx !== -1) {
+        handleAuditionSlice(foundIdx);
+      }
+    }
+  };
+
+  const handleContainerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!activeDragTarget || !waveformContainerRef.current) return;
+    const rect = waveformContainerRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+
+    // Dragging TRIM START
+    if (activeDragTarget === 'START') {
+      const maxAllowed = Math.max(0, endOffset - 0.015);
+      const newStart = Math.max(0, Math.min(maxAllowed, ratio));
+      onUpdatePadConfig({ startOffset: newStart });
       return;
     }
 
-    // In MANUAL mode: Clicking creates a new chop slice point right at the clicked position!
-    if (chopMode === 'MANUAL') {
-      insertManualSliceAt(clickRatio);
+    // Dragging TRIM END
+    if (activeDragTarget === 'END') {
+      const minAllowed = Math.min(1, startOffset + 0.015);
+      const newEnd = Math.min(1, Math.max(minAllowed, ratio));
+      onUpdatePadConfig({ endOffset: newEnd });
       return;
     }
 
-    // Otherwise, select and audition the clicked slice segment
-    const sliceIdx = slices.findIndex((s) => clickRatio >= s.start && clickRatio <= s.end);
-    if (sliceIdx !== -1) {
-      handleAuditionSlice(sliceIdx);
+    // Dragging CHOP ACTIVE SLICE START
+    if (activeDragTarget === 'SLICE_START' && activeSlice) {
+      const minBound = activeSliceIndex > 0 ? (slices[activeSliceIndex - 1]?.start || 0) + 0.01 : 0;
+      const maxBound = activeSlice.end - 0.015;
+      const clamped = Math.max(minBound, Math.min(maxBound, ratio));
+
+      setSlices((prev) => {
+        const next = [...prev];
+        if (next[activeSliceIndex]) {
+          next[activeSliceIndex].start = clamped;
+        }
+        if (activeSliceIndex > 0 && next[activeSliceIndex - 1]) {
+          next[activeSliceIndex - 1].end = clamped;
+        }
+        return next;
+      });
+      return;
+    }
+
+    // Dragging CHOP ACTIVE SLICE END
+    if (activeDragTarget === 'SLICE_END' && activeSlice) {
+      const minBound = activeSlice.start + 0.015;
+      const maxBound = activeSliceIndex < slices.length - 1 ? (slices[activeSliceIndex + 1]?.end || 1) - 0.01 : 1;
+      const clamped = Math.max(minBound, Math.min(maxBound, ratio));
+
+      setSlices((prev) => {
+        const next = [...prev];
+        if (next[activeSliceIndex]) {
+          next[activeSliceIndex].end = clamped;
+        }
+        if (activeSliceIndex < next.length - 1 && next[activeSliceIndex + 1]) {
+          next[activeSliceIndex + 1].start = clamped;
+        }
+        return next;
+      });
+      return;
+    }
+
+    // Dragging an arbitrary slice boundary index
+    if (typeof activeDragTarget === 'number' && slices[activeDragTarget] && slices[activeDragTarget - 1]) {
+      const prevSlice = slices[activeDragTarget - 1];
+      const nextSlice = slices[activeDragTarget];
+      const minBound = prevSlice.start + 0.01;
+      const maxBound = nextSlice.end - 0.01;
+      const clamped = Math.max(minBound, Math.min(maxBound, ratio));
+
+      setSlices((prev) => {
+        const next = [...prev];
+        next[activeDragTarget].start = clamped;
+        next[activeDragTarget - 1].end = clamped;
+        return next;
+      });
+    }
+  };
+
+  const handleContainerPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activeDragTarget) {
+      setActiveDragTarget(null);
+      try {
+        waveformContainerRef.current?.releasePointerCapture(e.pointerId);
+      } catch {
+        // fallback
+      }
     }
   };
 
@@ -276,7 +381,6 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
     if (ratio <= 0.02 || ratio >= 0.98) return;
 
     setSlices((prev) => {
-      // Find which slice contains this ratio
       const targetIdx = prev.findIndex((s) => ratio > s.start && ratio < s.end);
       if (targetIdx === -1) return prev;
 
@@ -299,61 +403,11 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
 
       const updated = [...prev];
       updated.splice(targetIdx, 1, firstPart, secondPart);
-
-      // Re-index ids
       return updated.map((s, idx) => ({ ...s, id: idx }));
     });
 
-    // Audition the new slice
     if (sampleData?.buffer) {
-      const sliced = onSliceAudioBuffer(sampleData.buffer, ratio, 1.0);
-      onPreviewBuffer(sliced);
-    }
-  };
-
-  // Pointer Move on Canvas
-  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-
-    // Handle TRIM marker drag
-    if (draggingTrimHandle === 'START') {
-      const maxEnd = (padConfig.endOffset || 1) - 0.02;
-      onUpdatePadConfig({ startOffset: Math.min(maxEnd, ratio) });
-      return;
-    }
-    if (draggingTrimHandle === 'END') {
-      const minStart = (padConfig.startOffset || 0) + 0.02;
-      onUpdatePadConfig({ endOffset: Math.max(minStart, ratio) });
-      return;
-    }
-
-    // Handle CHOP slice boundary drag
-    if (draggingMarkerIndex !== null && slices[draggingMarkerIndex] && slices[draggingMarkerIndex - 1]) {
-      const prevSlice = slices[draggingMarkerIndex - 1];
-      const nextSlice = slices[draggingMarkerIndex];
-
-      const minBound = prevSlice.start + 0.01;
-      const maxBound = nextSlice.end - 0.01;
-      const clampedRatio = Math.max(minBound, Math.min(maxBound, ratio));
-
-      setSlices((prev) => {
-        const next = [...prev];
-        next[draggingMarkerIndex].start = clampedRatio;
-        next[draggingMarkerIndex - 1].end = clampedRatio;
-        return next;
-      });
-    }
-  };
-
-  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    setDraggingMarkerIndex(null);
-    setDraggingTrimHandle(null);
-    try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      // fallback
+      onPreviewBuffer(sampleData.buffer, padConfig.volume, ratio, 1.0);
     }
   };
 
@@ -393,6 +447,10 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
     }, 4500);
   };
 
+  const handleResetTrim = () => {
+    onUpdatePadConfig({ startOffset: 0, endOffset: 1 });
+  };
+
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       onDropAudioFile(e.target.files[0], padConfig.id);
@@ -400,29 +458,36 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
     }
   };
 
-  const activeSlice = slices[activeSliceIndex];
+  // Current start & end display values
+  const currentStartRatio = editSubTab === 'CHOP' ? sliceStartRatio : startOffset;
+  const currentEndRatio = editSubTab === 'CHOP' ? sliceEndRatio : endOffset;
+  const currentStartTime = (currentStartRatio * duration).toFixed(3);
+  const currentEndTime = (currentEndRatio * duration).toFixed(3);
+  const currentDurationTime = ((currentEndRatio - currentStartRatio) * duration).toFixed(3);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1017] text-slate-200 select-none overflow-y-auto p-4 gap-3">
-      {/* Top Bar: Pad Selector, Sub-Tab Switcher (TRIM vs CHOP), and Actions */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[#141924] border border-[#222a3d] rounded-lg">
-        {/* Left: Pad info */}
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-full bg-[#0d1017] text-slate-200 select-none overflow-y-auto p-3.5 gap-2.5">
+      {/* Top Header Bar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#141924] border border-[#222a3d] rounded-lg shrink-0">
+        {/* Left: Pad Info */}
+        <div className="flex items-center gap-2.5">
           <div
             style={{ backgroundColor: padConfig.color }}
-            className="w-3.5 h-3.5 rounded-full"
+            className="w-3 h-3 rounded-full shadow-[0_0_8px_currentColor]"
           />
           <div className="flex flex-col">
-            <span className="text-xs font-mono font-bold text-white uppercase">
-              PAD {padConfig.id + 1}: {padConfig.name}
-            </span>
-            <span className="text-[10px] font-mono text-slate-400">
-              {sampleData ? `${(sampleData.duration * 1000).toFixed(0)} ms &bull; 44.1kHz` : 'NO SAMPLE'}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono font-bold text-white uppercase">
+                PAD {padConfig.id + 1}: {padConfig.name}
+              </span>
+              <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/60">
+                {(duration).toFixed(2)}s
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Center: TRIM vs CHOP Sub-Mode Toggle */}
+        {/* Center: TRIM vs CHOP Sub-Mode Switcher */}
         <div className="flex items-center gap-1 bg-[#090b10] p-1 rounded-lg border border-[#1e2536]">
           <button
             onClick={() => setEditSubTab('TRIM')}
@@ -433,7 +498,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Sliders size={13} />
+            <Sliders size={12} />
             <span>TRIM &amp; PARAMS</span>
           </button>
 
@@ -449,12 +514,12 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Scissors size={13} />
+            <Scissors size={12} />
             <span>WAVEFORM CHOP</span>
           </button>
         </div>
 
-        {/* Right: Audition, Soul Break Demo & Load File */}
+        {/* Right: Quick Tools */}
         <div className="flex items-center gap-2">
           {editSubTab === 'CHOP' && (
             <button
@@ -464,18 +529,9 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
               className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 rounded text-[10px] font-mono font-bold text-white shadow-sm"
             >
               <Sparkles size={11} />
-              <span>LOAD SOUL BREAK</span>
+              <span>SOUL BREAK DEMO</span>
             </button>
           )}
-
-          <button
-            onClick={() => onTriggerPad(padConfig.id)}
-            type="button"
-            className="flex items-center gap-1.5 px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-[10px] font-mono font-bold text-white shadow-sm"
-          >
-            <Play size={11} className="fill-white" />
-            <span>AUDITION</span>
-          </button>
 
           <input
             ref={fileInputRef}
@@ -487,7 +543,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
           <button
             onClick={() => fileInputRef.current?.click()}
             type="button"
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-[#1b2232] hover:bg-[#252f44] border border-[#2e3952] rounded text-[10px] font-mono font-bold text-slate-200 shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1 bg-[#1b2232] hover:bg-[#252f44] border border-[#2e3952] rounded text-[10px] font-mono font-bold text-slate-200 shadow-sm"
           >
             <Upload size={11} />
             <span>LOAD FILE</span>
@@ -495,12 +551,12 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
         </div>
       </div>
 
-      {/* Chop Configuration Tools Bar (Only displayed in CHOP sub-tab) */}
+      {/* CHOP Sub-Mode Options Bar */}
       {editSubTab === 'CHOP' && (
-        <div className="flex items-center justify-between p-2.5 bg-[#121622] border border-[#202738] rounded-lg text-xs font-mono">
+        <div className="flex items-center justify-between p-2 bg-[#121622] border border-[#202738] rounded-lg text-xs font-mono shrink-0">
           {/* Mode Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 font-bold">CHOP METHOD:</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 font-bold mr-1">CHOP MODE:</span>
             {(['MANUAL', 'EQUAL', 'TRANSIENT'] as ChopMode[]).map((mode) => (
               <button
                 key={mode}
@@ -519,16 +575,16 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
                     : 'bg-[#1b2232] text-slate-400 hover:text-white'
                 }`}
               >
-                {mode === 'MANUAL' ? 'CLICK WAVE (직접 클릭)' : mode === 'EQUAL' ? 'EQUAL DIVISIONS' : 'TRANSIENT PEAKS'}
+                {mode === 'MANUAL' ? 'CLICK TO SLICE' : mode === 'EQUAL' ? 'EQUAL DIVIDE' : 'TRANSIENT PEAKS'}
               </button>
             ))}
           </div>
 
-          {/* Slices count / Sensitivity / Manual controls */}
+          {/* Slices count / Sensitivity */}
           <div className="flex items-center gap-3">
             {chopMode === 'EQUAL' && (
               <div className="flex items-center gap-1.5">
-                <span className="text-slate-400">DIVIDE:</span>
+                <span className="text-slate-400">SLICES:</span>
                 {[4, 8, 16].map((count) => (
                   <button
                     key={count}
@@ -570,35 +626,34 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
             )}
 
             {chopMode === 'MANUAL' && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-amber-400 font-bold">
-                  파형 위를 클릭하면 그 위치에 슬라이스 마커가 생성됩니다!
-                </span>
-                <button
-                  onClick={handleDeleteSlice}
-                  title="Delete active slice marker"
-                  className="flex items-center gap-1 px-2 py-0.5 bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 rounded text-[9px] text-rose-300 font-bold"
-                >
-                  <Trash2 size={10} />
-                  <span>DELETE SLICE</span>
-                </button>
-              </div>
+              <button
+                onClick={handleDeleteSlice}
+                title="Delete active slice marker"
+                className="flex items-center gap-1 px-2 py-0.5 bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 rounded text-[9px] text-rose-300 font-bold"
+              >
+                <Trash2 size={10} />
+                <span>DEL SLICE</span>
+              </button>
             )}
 
             <button
               onClick={recalculateChopSlices}
               type="button"
-              className="flex items-center gap-1 px-2.5 py-1 bg-[#1b2232] hover:bg-[#252f44] border border-[#2e3952] rounded text-[10px] text-slate-300 font-bold"
+              className="flex items-center gap-1 px-2 py-0.5 bg-[#1b2232] hover:bg-[#252f44] border border-[#2e3952] rounded text-[10px] text-slate-300 font-bold"
             >
-              <RotateCcw size={11} />
+              <RotateCcw size={10} />
               <span>RESET</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Main High-Resolution Interactive Waveform Canvas */}
+      {/* WAVEFORM CONTAINER (100% UNOBSTRUCTED - NO TEST TRIM BOX ON TOP!) */}
       <div
+        ref={waveformContainerRef}
+        onPointerDown={handleContainerPointerDown}
+        onPointerMove={handleContainerPointerMove}
+        onPointerUp={handleContainerPointerUp}
         onDragOver={(e) => {
           e.preventDefault();
           setIsDraggingFile(true);
@@ -611,86 +666,244 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
             onDropAudioFile(e.dataTransfer.files[0], padConfig.id);
           }
         }}
-        className={`relative h-36 bg-[#090b10] border rounded-xl overflow-hidden shadow-inner flex flex-col justify-between ${
-          isDraggingFile ? 'border-akai-red ring-2 ring-akai-red' : 'border-[#1e2536]'
+        className={`relative h-44 w-full bg-[#080a0f] border-2 rounded-xl overflow-hidden shadow-inner cursor-crosshair select-none touch-none shrink-0 ${
+          isDraggingFile ? 'border-akai-red ring-2 ring-akai-red' : 'border-[#1f2637]'
         }`}
       >
+        {/* Background Waveform Canvas */}
         <canvas
           ref={canvasRef}
           width={640}
-          height={144}
-          onPointerDown={handleCanvasPointerDown}
-          onPointerMove={handleCanvasPointerMove}
-          onPointerUp={handleCanvasPointerUp}
-          className="w-full h-full block cursor-crosshair touch-none"
+          height={176}
+          className="w-full h-full block pointer-events-none"
         />
 
-        {/* Overlay Instructions Badge */}
-        <div className="absolute top-2 right-3 pointer-events-none text-[9px] font-mono text-slate-400 bg-black/60 px-2 py-0.5 rounded border border-white/10">
-          {editSubTab === 'CHOP'
-            ? 'CLICK WAVEFORM TO SLICE/AUDITION &bull; DRAG MARKERS TO ADJUST BOUNDARIES'
-            : 'DRAG GREEN/RED HANDLES TO TRIM AUDIO'}
-        </div>
+        {/* Shaded Regions (Outside of Start & End) */}
+        {editSubTab === 'TRIM' && (
+          <>
+            {/* Shaded Area before Start Bar */}
+            <div
+              style={{ width: `${startOffset * 100}%` }}
+              className="absolute top-0 bottom-0 left-0 bg-black/60 pointer-events-none border-r border-emerald-500/40"
+            />
+            {/* Shaded Area after End Bar */}
+            <div
+              style={{ left: `${endOffset * 100}%`, right: 0 }}
+              className="absolute top-0 bottom-0 bg-black/60 pointer-events-none border-l border-rose-500/40"
+            />
+          </>
+        )}
 
-        {/* Waveform Bottom Info Strip */}
-        <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between bg-[#121622]/90 backdrop-blur-sm border border-[#232c40] rounded px-3 py-1 text-[10px] font-mono">
-          {editSubTab === 'CHOP' ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400">ACTIVE CHOP:</span>
-                <span className="font-bold text-white">
-                  SLICE {activeSliceIndex + 1} of {slices.length}
+        {/* IN CHOP MODE: Intermediate slice divider bars */}
+        {editSubTab === 'CHOP' &&
+          slices.map((slice, idx) => {
+            if (idx === 0) return null;
+            const xPercent = slice.start * 100;
+            const isMarkerBeingDragged = activeDragTarget === idx;
+
+            return (
+              <div
+                key={slice.id}
+                style={{ left: `${xPercent}%` }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setActiveDragTarget(idx);
+                  waveformContainerRef.current?.setPointerCapture(e.pointerId);
+                }}
+                className="absolute top-0 bottom-0 w-6 -ml-3 flex flex-col items-center justify-between cursor-ew-resize group z-10"
+              >
+                {/* Top Badge */}
+                <span
+                  style={{ backgroundColor: slice.color }}
+                  className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold text-white shadow-md transition-transform ${
+                    isMarkerBeingDragged ? 'scale-125 ring-2 ring-white' : 'group-hover:scale-110'
+                  }`}
+                >
+                  [{idx + 1}]
                 </span>
-                {activeSlice && (
-                  <span className="text-amber-400 font-mono">
-                    [{(activeSlice.start * 100).toFixed(1)}% &rarr; {(activeSlice.end * 100).toFixed(1)}%]
-                  </span>
-                )}
+
+                {/* Vertical Divider Line */}
+                <div
+                  style={{ backgroundColor: slice.color }}
+                  className="w-[2px] h-full opacity-70 group-hover:opacity-100 shadow-[0_0_6px_currentColor]"
+                />
+
+                {/* Bottom Notch */}
+                <div
+                  style={{ backgroundColor: slice.color }}
+                  className="w-1.5 h-1.5 rounded-full mb-1 opacity-70"
+                />
               </div>
-              <button
-                onClick={() => handleAuditionSlice(activeSliceIndex)}
-                type="button"
-                className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-bold"
-              >
-                <Play size={10} className="fill-white" />
-                <span>PLAY SLICE</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-3">
-                <span>START: {((padConfig.startOffset || 0) * 100).toFixed(1)}%</span>
-                <span>END: {((padConfig.endOffset || 1) * 100).toFixed(1)}%</span>
-                <span>LENGTH: {(((padConfig.endOffset || 1) - (padConfig.startOffset || 0)) * 100).toFixed(1)}%</span>
-              </div>
-              <button
-                onClick={() => onTriggerPad(padConfig.id)}
-                type="button"
-                className="flex items-center gap-1 px-2.5 py-0.5 bg-akai-red hover:bg-rose-600 rounded text-white font-bold"
-              >
-                <Play size={10} className="fill-white" />
-                <span>TEST TRIM</span>
-              </button>
-            </>
-          )}
+            );
+          })}
+
+        {/* ======================================================== */}
+        {/* DRAGGABLE START BAR (GREEN) - INDICATING AUDIO START POINT */}
+        {/* ======================================================== */}
+        <div
+          style={{ left: `${currentStartRatio * 100}%` }}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            setActiveDragTarget(editSubTab === 'CHOP' ? 'SLICE_START' : 'START');
+            waveformContainerRef.current?.setPointerCapture(e.pointerId);
+          }}
+          className="absolute top-0 bottom-0 w-8 -ml-4 flex flex-col items-center justify-between cursor-ew-resize group z-20"
+        >
+          {/* Top Grab Handle Pill */}
+          <div
+            className={`
+              flex items-center gap-1 px-2 py-0.5 rounded-b-md bg-emerald-500 text-black font-mono font-black text-[9px]
+              shadow-[0_2px_8px_rgba(16,185,129,0.8)] border border-emerald-300 transition-all select-none
+              ${
+                activeDragTarget === 'START' || activeDragTarget === 'SLICE_START'
+                  ? 'scale-110 ring-2 ring-white bg-emerald-400'
+                  : 'group-hover:scale-105 group-hover:bg-emerald-400'
+              }
+            `}
+          >
+            <span>START ▶</span>
+            <span className="text-[7px] opacity-80">{currentStartTime}s</span>
+          </div>
+
+          {/* Vertical Luminous Green Laser Line */}
+          <div className="w-[3px] h-full bg-emerald-400 shadow-[0_0_10px_#10b981] group-hover:w-[4px] transition-all" />
+
+          {/* Bottom Pointer Triangle Handle */}
+          <div className="w-3 h-2 bg-emerald-500 border border-emerald-300 shadow-sm flex items-center justify-center rounded-t-sm mb-0.5">
+            <div className="w-1.5 h-1 bg-black rounded-full" />
+          </div>
         </div>
 
+        {/* ====================================================== */}
+        {/* DRAGGABLE END BAR (RED) - INDICATING AUDIO END POINT   */}
+        {/* ====================================================== */}
+        <div
+          style={{ left: `${currentEndRatio * 100}%` }}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            setActiveDragTarget(editSubTab === 'CHOP' ? 'SLICE_END' : 'END');
+            waveformContainerRef.current?.setPointerCapture(e.pointerId);
+          }}
+          className="absolute top-0 bottom-0 w-8 -ml-4 flex flex-col items-center justify-between cursor-ew-resize group z-20"
+        >
+          {/* Top Grab Handle Pill */}
+          <div
+            className={`
+              flex items-center gap-1 px-2 py-0.5 rounded-b-md bg-rose-600 text-white font-mono font-black text-[9px]
+              shadow-[0_2px_8px_rgba(225,29,72,0.8)] border border-rose-400 transition-all select-none
+              ${
+                activeDragTarget === 'END' || activeDragTarget === 'SLICE_END'
+                  ? 'scale-110 ring-2 ring-white bg-rose-500'
+                  : 'group-hover:scale-105 group-hover:bg-rose-500'
+              }
+            `}
+          >
+            <span className="text-[7px] opacity-80">{currentEndTime}s</span>
+            <span>◀ END</span>
+          </div>
+
+          {/* Vertical Luminous Red Laser Line */}
+          <div className="w-[3px] h-full bg-rose-500 shadow-[0_0_10px_#ef4444] group-hover:w-[4px] transition-all" />
+
+          {/* Bottom Pointer Triangle Handle */}
+          <div className="w-3 h-2 bg-rose-600 border border-rose-400 shadow-sm flex items-center justify-center rounded-t-sm mb-0.5">
+            <div className="w-1.5 h-1 bg-white rounded-full" />
+          </div>
+        </div>
+
+        {/* Active dragging tooltip */}
+        {activeDragTarget && (
+          <div className="absolute top-8 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/90 border border-cyan-400 text-cyan-300 font-mono text-xs rounded-md shadow-2xl z-30 pointer-events-none flex items-center gap-2 animate-pulse">
+            <span className="font-bold">
+              {activeDragTarget === 'START' || activeDragTarget === 'SLICE_START'
+                ? `START BAR: ${currentStartTime}s (${(currentStartRatio * 100).toFixed(1)}%)`
+                : `END BAR: ${currentEndTime}s (${(currentEndRatio * 100).toFixed(1)}%)`}
+            </span>
+          </div>
+        )}
+
+        {/* Drag & Drop File Over Dropzone */}
         {isDraggingFile && (
-          <div className="absolute inset-0 bg-akai-red/80 backdrop-blur-sm flex items-center justify-center font-mono font-bold text-white text-xs">
-            DROP AUDIO FILE TO REPLACE SAMPLE
+          <div className="absolute inset-0 bg-akai-red/80 backdrop-blur-sm flex items-center justify-center font-mono font-bold text-white text-xs z-30 pointer-events-none">
+            DROP AUDIO FILE TO REPLACE PAD SAMPLE
           </div>
         )}
       </div>
 
-      {/* CHOP SUB-MODE: Slices Matrix & Assign Chops to 16 Pads */}
-      {editSubTab === 'CHOP' && (
-        <div className="flex flex-col gap-2 bg-[#121622] p-3 rounded-xl border border-[#202738]">
-          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 px-1">
-            <span>CHOP SLICES MATRIX ({slices.length} SLICES) &bull; CLICK TO AUDITION</span>
-            <span className="text-amber-400 font-bold">READY TO MAP TO PADS</span>
+      {/* ========================================================================= */}
+      {/* CLEAN STATUS & PLAYBACK TOOLBAR (PLACED OUTSIDE BELOW THE WAVEFORM)       */}
+      {/* ========================================================================= */}
+      <div className="flex items-center justify-between px-3.5 py-2 bg-[#121622] border border-[#222a3d] rounded-lg text-xs font-mono shrink-0">
+        {/* Left: Precise Time Readouts */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]" />
+            <span className="text-slate-400 text-[10px]">START:</span>
+            <span className="font-bold text-emerald-400 font-mono">{currentStartTime}s</span>
+            <span className="text-[10px] text-slate-500">({(currentStartRatio * 100).toFixed(1)}%)</span>
           </div>
 
-          {/* Slices Grid */}
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_6px_#ef4444]" />
+            <span className="text-slate-400 text-[10px]">END:</span>
+            <span className="font-bold text-rose-400 font-mono">{currentEndTime}s</span>
+            <span className="text-[10px] text-slate-500">({(currentEndRatio * 100).toFixed(1)}%)</span>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5">
+            <span className="text-slate-400 text-[10px]">LENGTH:</span>
+            <span className="font-bold text-cyan-400 font-mono">{currentDurationTime}s</span>
+          </div>
+        </div>
+
+        {/* Right: Audition & Reset Controls */}
+        <div className="flex items-center gap-2">
+          {editSubTab === 'TRIM' ? (
+            <>
+              <button
+                onClick={handleResetTrim}
+                title="Reset Start to 0% and End to 100%"
+                type="button"
+                className="px-2.5 py-1 bg-[#1a202d] hover:bg-[#232b3d] border border-[#2d374d] rounded text-[10px] text-slate-300 font-bold transition-colors"
+              >
+                RESET TRIM
+              </button>
+
+              <button
+                onClick={handleAuditionTrim}
+                type="button"
+                className="flex items-center gap-1.5 px-3.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded text-xs shadow-md transition-all"
+              >
+                <Play size={12} className="fill-white" />
+                <span>PLAY TRIMMED RANGE</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => handleAuditionSlice(activeSliceIndex)}
+                type="button"
+                className="flex items-center gap-1.5 px-3.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded text-xs shadow-md transition-all"
+              >
+                <Play size={12} className="fill-white" />
+                <span>AUDITION CHOP [{activeSliceIndex + 1}]</span>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* CHOP SUB-MODE: Slices Matrix Grid & Assign Chops across 16 Pads           */}
+      {/* ========================================================================= */}
+      {editSubTab === 'CHOP' && (
+        <div className="flex flex-col gap-2 bg-[#121622] p-3 rounded-xl border border-[#202738] shrink-0">
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 px-1">
+            <span>CHOP SLICES MATRIX ({slices.length} SLICES) • CLICK TO SELECT &amp; AUDITION</span>
+            <span className="text-amber-400 font-bold">ACTIVE: SLICE {activeSliceIndex + 1}</span>
+          </div>
+
+          {/* Slices Grid (16 buttons) */}
           <div className="grid grid-cols-8 gap-1.5 max-h-24 overflow-y-auto pr-1">
             {slices.map((slice, idx) => {
               const isSelected = idx === activeSliceIndex;
@@ -703,7 +916,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
                   }}
                   className={`
                     p-1.5 rounded bg-[#131722] hover:bg-[#1a202f] border transition-all flex flex-col items-center justify-between
-                    ${isSelected ? 'bg-[#1b2234] shadow-[0_0_8px_rgba(255,255,255,0.2)]' : ''}
+                    ${isSelected ? 'bg-[#1b2234] shadow-[0_0_10px_rgba(255,255,255,0.3)] ring-1 ring-white/50' : ''}
                   `}
                 >
                   <div className="flex items-center justify-between w-full text-[8px] font-mono text-slate-400">
@@ -718,7 +931,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
             })}
           </div>
 
-          {/* Assign Chops Across 16 Pads Bar */}
+          {/* The Big Assign Button Bar */}
           <div className="flex items-center justify-between pt-2 border-t border-[#1f2637] mt-1">
             <div className="flex flex-col">
               <span className="text-xs font-mono font-bold text-white flex items-center gap-1.5">
@@ -726,26 +939,28 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
                 ASSIGN CHOPS TO 16 PADS
               </span>
               <span className="text-[9px] font-mono text-slate-400">
-                SLICES 1&ndash;{Math.min(16, slices.length)} MAP TO PAD 01&ndash;{Math.min(16, slices.length)} &bull; MONO CHOKE (MUTE GROUP 1) ENABLED
+                SLICES 1–{Math.min(16, slices.length)} WILL BE ASSIGNED TO PAD 01–{Math.min(16, slices.length)} WITH CHOKE GROUP 1
               </span>
             </div>
 
             <button
               onClick={handleAssignTo16Pads}
               type="button"
-              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 active:scale-95 text-white font-mono font-bold text-xs rounded-lg shadow-lg transition-all"
+              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-amber-600 via-rose-600 to-akai-red hover:from-amber-500 hover:to-rose-500 active:scale-95 text-white font-mono font-bold text-xs rounded-lg shadow-lg transition-all"
             >
-              <Scissors size={13} />
+              <Scissors size={14} />
               <span>ASSIGN TO 16 PADS</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* TRIM SUB-MODE: Sliders, Knobs, Envelope & Filter Controls */}
+      {/* ========================================================================= */}
+      {/* TRIM SUB-MODE: Sliders, Knobs, Envelope & Filter Controls                 */}
+      {/* ========================================================================= */}
       {editSubTab === 'TRIM' && (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[#131722] p-3 rounded-lg border border-[#212738]">
+        <div className="flex flex-col gap-2 shrink-0">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 bg-[#131722] p-3 rounded-lg border border-[#212738]">
             {/* Pitch / Tune */}
             <div className="flex flex-col gap-1">
               <div className="flex justify-between text-[10px] font-mono text-slate-400">
@@ -894,7 +1109,7 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
           </div>
 
           {/* Switches: Reverse & Mute Group */}
-          <div className="flex items-center gap-4 bg-[#141924] p-3 rounded-lg border border-[#222a3d] text-xs font-mono">
+          <div className="flex items-center gap-4 bg-[#141924] p-2.5 rounded-lg border border-[#222a3d] text-xs font-mono">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -919,12 +1134,12 @@ export const SampleEditView: React.FC<SampleEditViewProps> = ({
               </select>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* Success Notification Banner */}
       {successMessage && (
-        <div className="flex items-center gap-2 p-2.5 bg-emerald-950/80 border border-emerald-700 text-emerald-300 text-xs font-mono rounded-lg shadow-md animate-pulse">
+        <div className="flex items-center gap-2 p-2.5 bg-emerald-950/80 border border-emerald-700 text-emerald-300 text-xs font-mono rounded-lg shadow-md animate-pulse shrink-0">
           <Check size={14} />
           <span>{successMessage}</span>
         </div>

@@ -629,7 +629,7 @@ export class AudioEngine {
   /**
    * Audition / Preview any AudioBuffer directly through master output
    */
-  public previewAudioBuffer(buffer: AudioBuffer, volume: number = 0.85): void {
+  public previewAudioBuffer(buffer: AudioBuffer, volume: number = 0.85, startRatio: number = 0, endRatio: number = 1): void {
     if (!this.ctx || !this.masterGain) return;
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
@@ -644,7 +644,12 @@ export class AudioEngine {
     source.connect(gain);
     gain.connect(this.masterGain);
 
-    source.start(this.ctx.currentTime);
+    const safeStartRatio = Math.max(0, Math.min(0.999, startRatio));
+    const safeEndRatio = Math.max(safeStartRatio + 0.001, Math.min(1, endRatio));
+    const offset = safeStartRatio * buffer.duration;
+    const playLength = (safeEndRatio - safeStartRatio) * buffer.duration;
+
+    source.start(this.ctx.currentTime, offset, playLength > 0 ? playLength : undefined);
   }
 
   /**

@@ -110,27 +110,32 @@ export const GridSequencerView: React.FC<GridSequencerViewProps> = ({
         </div>
       </div>
 
-      {/* Grid Header: Step Numbers & Beat Markers */}
-      <div className="flex items-center pl-28 pr-3 py-1 bg-[#10141d] border-b border-[#1b2130] text-[9px] font-mono text-slate-500 font-semibold">
-        {Array.from({ length: 16 }).map((_, i) => {
-          const stepNum = startStep + i;
-          const isDownbeat = i % 4 === 0;
-          const isCurrent = isPlaying && currentStep === stepNum;
-          return (
-            <div
-              key={i}
-              className={`flex-1 text-center py-0.5 rounded ${
-                isCurrent
-                  ? 'bg-emerald-500/30 text-emerald-300 font-bold'
-                  : isDownbeat
-                  ? 'text-slate-300'
-                  : ''
-              }`}
-            >
-              {i + 1}
-            </div>
-          );
-        })}
+      {/* Grid Header: Step Numbers & Beat Markers (Aligned 1:1 with step columns) */}
+      <div className="flex items-center py-1 px-2 bg-[#10141d] border-b border-[#1b2130] text-[9px] font-mono text-slate-500 font-semibold shrink-0">
+        <div className="w-28 shrink-0 flex items-center gap-1.5 pr-2 text-[8px] text-slate-400 font-bold uppercase tracking-wider">
+          <span>PAD / 16TH</span>
+        </div>
+        <div className="flex-1 flex items-center gap-1">
+          {Array.from({ length: 16 }).map((_, i) => {
+            const stepNum = startStep + i;
+            const isDownbeat = i % 4 === 0;
+            const isCurrent = isPlaying && currentStep === stepNum;
+            return (
+              <div
+                key={i}
+                className={`flex-1 text-center py-0.5 rounded ${
+                  isCurrent
+                    ? 'bg-emerald-500/30 text-emerald-300 font-bold'
+                    : isDownbeat
+                    ? 'text-slate-300 font-bold'
+                    : 'text-slate-500'
+                }`}
+              >
+                {i + 1}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Grid Rows: 16 Pads */}
@@ -146,24 +151,25 @@ export const GridSequencerView: React.FC<GridSequencerViewProps> = ({
                 isSelected ? 'bg-[#151a26]' : ''
               }`}
             >
-              {/* Pad Label Header */}
+              {/* Pad Label Header (Fixed w-28 matching grid header) */}
               <button
                 onClick={() => {
                   onPadSelect(pad.id);
                   onTriggerPad(pad.id);
                 }}
-                className="flex items-center gap-1.5 w-26 pr-2 text-left truncate group"
+                type="button"
+                className="w-28 shrink-0 flex items-center gap-1.5 pr-2 text-left truncate group"
               >
                 <div
                   style={{ backgroundColor: pad.color }}
-                  className="w-2 h-2 rounded-full shrink-0 group-hover:scale-125 transition-transform"
+                  className="w-2 h-2 rounded-full shrink-0 group-hover:scale-125 transition-transform shadow-[0_0_4px_currentColor]"
                 />
                 <div className="flex flex-col truncate">
                   <span className="text-[10px] font-bold text-slate-200 group-hover:text-white truncate">
                     {pad.name}
                   </span>
                   <span className="text-[8px] font-mono text-slate-500">
-                    P{pad.id + 1}
+                    PAD {pad.id + 1}
                   </span>
                 </div>
               </button>

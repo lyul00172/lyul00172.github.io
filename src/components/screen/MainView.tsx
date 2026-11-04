@@ -161,7 +161,7 @@ export const MainView: React.FC<MainViewProps> = ({
         </button>
       </div>
 
-      {/* Center Waveform & Oscilloscope Display */}
+      {/* Center Waveform & Oscilloscope Display (Full clear view with no box covering waves!) */}
       <div className="relative flex-1 min-h-[140px] bg-[#090b10] border border-[#1e2536] rounded-lg overflow-hidden shadow-inner flex flex-col justify-between">
         <canvas
           ref={canvasRef}
@@ -170,7 +170,7 @@ export const MainView: React.FC<MainViewProps> = ({
           className="w-full h-full block"
         />
 
-        {/* Overlay Overlay Info */}
+        {/* Top Info Tag */}
         <div className="absolute top-2 left-3 flex items-center gap-2 pointer-events-none">
           <span className="text-[9px] font-mono font-bold text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/40">
             MASTER OSCILLOSCOPE
@@ -181,18 +181,18 @@ export const MainView: React.FC<MainViewProps> = ({
             </span>
           )}
         </div>
+      </div>
 
-        {/* Selected Pad info bar */}
-        <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between bg-[#121622]/90 backdrop-blur-sm border border-[#232c40] rounded px-3 py-1 text-[10px] font-mono">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400">SELECTED PAD:</span>
-            <span className="font-bold text-white">PAD {selectedPad.id + 1} - {selectedPad.name}</span>
-          </div>
-          <div className="flex items-center gap-3 text-slate-400">
-            <span>VOL: {Math.round(selectedPad.volume * 100)}%</span>
-            <span>PAN: {selectedPad.pan > 0 ? `R${Math.round(selectedPad.pan * 100)}` : selectedPad.pan < 0 ? `L${Math.round(Math.abs(selectedPad.pan) * 100)}` : 'C'}</span>
-            <span>TUNE: {selectedPad.pitch >= 0 ? `+${selectedPad.pitch}` : selectedPad.pitch}st</span>
-          </div>
+      {/* Selected Pad Info Bar (Cleanly positioned below canvas, zero occlusion!) */}
+      <div className="flex items-center justify-between bg-[#121622] border border-[#232c40] rounded-lg px-3 py-1.5 text-[10px] font-mono shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400">SELECTED PAD:</span>
+          <span className="font-bold text-white">PAD {selectedPad.id + 1} &bull; {selectedPad.name}</span>
+        </div>
+        <div className="flex items-center gap-3 text-slate-400">
+          <span>VOL: <strong className="text-white">{Math.round(selectedPad.volume * 100)}%</strong></span>
+          <span>PAN: <strong className="text-amber-400">{selectedPad.pan > 0 ? `R${Math.round(selectedPad.pan * 100)}` : selectedPad.pan < 0 ? `L${Math.round(Math.abs(selectedPad.pan) * 100)}` : 'C'}</strong></span>
+          <span>TUNE: <strong className="text-cyan-400">{selectedPad.pitch >= 0 ? `+${selectedPad.pitch}` : selectedPad.pitch}st</strong></span>
         </div>
       </div>
 
