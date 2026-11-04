@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react';
 import { KEYBOARD_MAP } from '../audio/defaultKits';
 
+const resolvePadKey = (event: KeyboardEvent): string | null => {
+  const directKey = event.key?.toLowerCase();
+  const codeKey = event.code?.toLowerCase();
+
+  if (directKey && directKey in KEYBOARD_MAP) return directKey;
+  if (codeKey && codeKey in KEYBOARD_MAP) return codeKey;
+
+  return null;
+};
+
 interface KeyboardTriggerOptions {
   onPadTrigger: (padId: number, velocity: number) => void;
   onPlayToggle: () => void;
@@ -59,8 +69,8 @@ export function useKeyboardTrigger({
       }
 
       // Pad triggering
-      const key = e.key.toLowerCase();
-      if (key in KEYBOARD_MAP) {
+      const key = resolvePadKey(e);
+      if (key) {
         e.preventDefault();
         const padId = KEYBOARD_MAP[key];
 
@@ -75,8 +85,8 @@ export function useKeyboardTrigger({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-      if (key in KEYBOARD_MAP) {
+      const key = resolvePadKey(e);
+      if (key) {
         const padId = KEYBOARD_MAP[key];
         setActiveKeys((prev) => {
           const next = new Set(prev);

@@ -362,15 +362,24 @@ export const DEFAULT_PAD_CONFIGS: PadConfig[] = [
   },
 ];
 
+// Physical MPC layout: top row is pads 13-16, then 9-12, then 5-8, then 1-4
+// Keyboard mapping is aligned to that same visual layout so the outer rows stay consistent.
 export const KEYBOARD_MAP: { [key: string]: number } = {
-  // MPC Pad 1-4 (Bottom row)
+  // Bottom row: pads 1-4
   'z': 0, 'x': 1, 'c': 2, 'v': 3,
-  // MPC Pad 5-8 (Row 2)
+  'keyz': 0, 'keyx': 1, 'keyc': 2, 'keyv': 3,
+
+  // Row 2: pads 5-8
   'a': 4, 's': 5, 'd': 6, 'f': 7,
-  // MPC Pad 9-12 (Row 3)
+  'keya': 4, 'keys': 5, 'keyd': 6, 'keyf': 7,
+
+  // Row 3: pads 9-12
   'q': 8, 'w': 9, 'e': 10, 'r': 11,
-  // MPC Pad 13-16 (Row 4, Top row)
+  'keyq': 8, 'keyw': 9, 'keye': 10, 'keyr': 11,
+
+  // Top row: pads 13-16
   '1': 12, '2': 13, '3': 14, '4': 15,
+  'digit1': 12, 'digit2': 13, 'digit3': 14, 'digit4': 15,
 };
 
 // Alternative standard Numpad mapping
