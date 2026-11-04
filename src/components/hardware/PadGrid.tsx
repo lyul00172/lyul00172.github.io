@@ -18,6 +18,7 @@ interface PadGridProps {
   onToggleFullLevel: () => void;
   onToggle16Level: () => void;
   onToggleErase: () => void;
+  onStopAllAudio: () => void;
   onOpenBrowse?: () => void;
   onDropAudioFile: (file: File, padId: number) => void;
 }
@@ -36,6 +37,7 @@ export const PadGrid: React.FC<PadGridProps> = ({
   onToggleFullLevel,
   onToggle16Level,
   onToggleErase,
+  onStopAllAudio,
   onOpenBrowse,
   onDropAudioFile,
 }) => {
@@ -133,6 +135,15 @@ export const PadGrid: React.FC<PadGridProps> = ({
             isActive={isEraseMode}
             onClick={onToggleErase}
             title="Click Erase then tap a pad to clear its pattern"
+            className="!py-1"
+          />
+          <HardwareButton
+            label="STOP ALL"
+            size="sm"
+            ledColor="white"
+            variant="danger"
+            onClick={onStopAllAudio}
+            title="Stop all currently playing audio immediately"
             className="!py-1"
           />
         </div>

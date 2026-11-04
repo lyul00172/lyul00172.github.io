@@ -53,6 +53,14 @@ export class AudioEngine {
   private onStepListeners: StepCallback[] = [];
   private onPadTriggerListeners: PadTriggerCallback[] = [];
 
+  private removeFinishedVoices(): void {
+    this.activeVoices = this.activeVoices.filter((voice) => {
+      const isFinished = voice.source.context.state === 'closed' || voice.source.buffer === null;
+      if (isFinished) return false;
+      return true;
+    });
+  }
+
   constructor() {
     this.padConfigs = JSON.parse(JSON.stringify(DEFAULT_PAD_CONFIGS));
     this.initDefaultPattern();
@@ -278,6 +286,8 @@ export class AudioEngine {
       this.ctx.resume();
     }
 
+    this.stopPadVoices(padId);
+
     const pad = this.padConfigs[padId];
     if (!pad || pad.isMuted) return;
 
@@ -370,7 +380,11 @@ export class AudioEngine {
 
     source.start(startTime, offset, playLength > 0 ? playLength : undefined);
 
-    // Register active voice for choke groups
+    // Register active voice for choke groups and track cleanup
+    source.onended = () => {
+      this.activeVoices = this.activeVoices.filter((voice) => voice.source !== source);
+    };
+
     this.activeVoices.push({
       padId,
       source,
@@ -922,6 +936,41 @@ export class AudioEngine {
    */
   public getPattern(): SequencerPattern {
     return this.pattern;
+  }
+
+  public stopPadVoices(padId: number): void {
+    this.activeVoices.forEach((voice) => {
+      if (voice.padId !== padId) return;
+      try {
+        const endTime = this.ctx ? this.ctx.currentTime + 0.02 : 0.02;
+        voice.gainNode.gain.cancelScheduledValues(endTime);
+        voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, endTime);
+        voice.gainNode.gain.exponentialRampToValueAtTime(0.0001, endTime + 0.02);
+        voice.source.stop(endTime + 0.03);
+      } catch {
+        // Source already stopped
+      }
+    });
+
+    this.activeVoices = this.activeVoices.filter((voice) => voice.padId !== padId);
+  }
+
+  public stopAllVoices(): void {
+    if (!this.ctx) return;
+
+    this.activeVoices.forEach((voice) => {
+      try {
+        const endTime = this.ctx!.currentTime + 0.02;
+        voice.gainNode.gain.cancelScheduledValues(endTime);
+        voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, endTime);
+        voice.gainNode.gain.exponentialRampToValueAtTime(0.0001, endTime + 0.02);
+        voice.source.stop(endTime + 0.03);
+      } catch {
+        // Source already stopped
+      }
+    });
+
+    this.activeVoices = [];
   }
 
   public toggleStep(padId: number, stepIndex: number): void {

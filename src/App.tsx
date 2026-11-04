@@ -148,12 +148,17 @@ export const App: React.FC = () => {
 
   const handleStop = useCallback(() => {
     engine.stop();
+    engine.stopAllVoices();
     setIsPlaying(false);
     setIsRecording(false);
     setIsOverdubbing(false);
     setCurrentStep(0);
     setCurrentBar(1);
     setCurrentBeat(1);
+  }, [engine]);
+
+  const handleStopAllAudio = useCallback(() => {
+    engine.stopAllVoices();
   }, [engine]);
 
   const handleRecord = useCallback(async () => {
@@ -580,6 +585,7 @@ export const App: React.FC = () => {
           setScreenMode((prev) => (prev === 'PAD_PERFORM' ? 'MAIN' : 'PAD_PERFORM'));
         }}
         onToggleErase={() => setIsEraseMode((prev) => !prev)}
+        onStopAllAudio={handleStopAllAudio}
         onPlay={handlePlay}
         onPlayStart={handlePlayStart}
         onStop={handleStop}

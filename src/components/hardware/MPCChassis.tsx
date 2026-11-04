@@ -49,6 +49,7 @@ interface MPCChassisProps {
   onToggleFullLevel: () => void;
   onToggle16Level: () => void;
   onToggleErase: () => void;
+  onStopAllAudio: () => void;
   onPlay: () => void;
   onPlayStart: () => void;
   onStop: () => void;
@@ -120,6 +121,7 @@ export const MPCChassis: React.FC<MPCChassisProps> = ({
   onToggleFullLevel,
   onToggle16Level,
   onToggleErase,
+  onStopAllAudio,
   onPlay,
   onPlayStart,
   onStop,
@@ -356,6 +358,7 @@ export const MPCChassis: React.FC<MPCChassisProps> = ({
             onToggleFullLevel={onToggleFullLevel}
             onToggle16Level={onToggle16Level}
             onToggleErase={onToggleErase}
+            onStopAllAudio={onStopAllAudio}
             onOpenBrowse={() => onSetScreenMode('BROWSE')}
             onDropAudioFile={onDropAudioFile}
           />
